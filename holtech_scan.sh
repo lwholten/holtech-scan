@@ -19,6 +19,8 @@ HELPTEXT="""
     -t --test:          Enable test mode                False
     -a --auto:          Auto generate file names        False
     -d --directory:     Set directory for saved scans   (/home/$USER/Documents/Scans/)
+    -o --open:          Open the file afterwards        False
+    -p --print:         Print the file afterwards       False
 """
 
 # --- Argument Handling --- 
@@ -54,6 +56,11 @@ while [[ "$#" -gt 0 ]]; do # Loop while there are arguments left
                 echo "Error: --directory requires a directory path." >&2
                 exit 1
             fi
+            ;;
+        -o|--open)
+            OPEN_FILE=1 # Set open file mode to TRUE
+            verbose_echo "[O] File will open after code execution."
+            shift # Consume the -o argument
             ;;
             
         *)
@@ -202,5 +209,16 @@ fi
 # Remove temporary files
 verbose_echo "Removing temp files..."
 rm -r ${TEMP_PATH}
+
+# Open the created PDF if the -o argument was provided
+if [[ "$OPEN_FILE" -eq 1 ]]; then
+    if [[ -f "${PDF_PATH}${FILENAME}" ]]; then # Check the PDF exists(it should!)
+        verbose_echo "Opening generated PDF: ${PDF_PATH}${FILENAME}"
+        # Open the file using its PATH
+        xdg-open "${PDF_PATH}${FILENAME}" &>/dev/null &
+    else
+        echo "Error: Cannot open file. PDF was not created or found at ${PDF_PATH}${FILENAME}" >&2
+    fi
+fi
 
 echo "Done." # File has executed to completion

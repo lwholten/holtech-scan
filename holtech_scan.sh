@@ -112,7 +112,7 @@ fetch_fileext() {
 
 validate_filename() {
     local proposed_name="$1" # Save user input as proposed name
-    local invalid_chars='/\x00' # Store invalid characters (null byte etc.)
+    local invalid_chars='/<>:"|?*\' # Store invalid characters
     local valid_filetypes=[]
 
     # Empty input
@@ -122,8 +122,8 @@ validate_filename() {
     fi
 
     # Forbidden characters
-    if [ -n "$invalid_chars" ] && echo "$proposed_name" | grep -q "[${invalid_chars}]"; then
-        tstamp_echo "Error: Filename contains forbidden characters." >&2
+    if echo "$proposed_name" | grep -q "[${invalid_chars}]"; then
+        tstamp_echo "Error: Filename contains forbidden characters: ${invalid_chars}." >&2
         return 1
     fi
 

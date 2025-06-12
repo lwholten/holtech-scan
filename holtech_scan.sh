@@ -20,6 +20,7 @@ DIFFERENT_DIRECTORY=0 # Toggle if directory changed with argument
 OPEN_FILE=0 # Toggle to open file, 0 by default
 PRINT_FILE=0 # Toggle to print file, 0 by default
 SCAN_DELAY=0 # Wait time before program starts scan
+PRINT_BLANK=0 # Toggle to print only blank pages (for testing purposes)
 HELPTEXT="""
     [ARGUMENTS]         [DESCRIPTION]               [DEFAULT]
     -h --help:          Show help menu              False
@@ -29,6 +30,7 @@ HELPTEXT="""
     -d --directory:     Set directory              ${DEFAULT_DIRECTORY}
     -o --open:          Open the file               False
     -p --print:         Print the file              False
+    -b --blank-pages:   Print only blank pages      False
     -w --wait:          Scan wait time <seconds>    None    
 """
 PRINTERTEXT="""
@@ -86,6 +88,11 @@ while [[ "$#" -gt 0 ]]; do # Loop while there are arguments left
             PRINT_FILE=1 # Set print file mode to 1
             verbose_echo "Print file (-p) enabled."
             shift # Consume the -p argument
+            ;;
+        -b|--blank-pages)
+            PRINT_BLANK=1 # Set print blank mode to 1
+            verbose_echo "Blank printing (-b) enabled."
+            shift # Consume the -b argument
             ;;
         -w|--wait)
             shift # Cosnume the -w argument
@@ -334,16 +341,12 @@ else
         echo "---------------------"
     } > "${DUMMY_TEXT_FILE}" # Redirect all echoes to the dummy text file
 
-    verbose_echo "Converting dummy text file to document..."
+    verbose_echo "Converting dummy text file..."
     convert "TEXT:${DUMMY_TEXT_FILE}" "${OUTPUT_DIRECTORY}${FILENAME}"
     DOCUMENT_CREATED=1
 
     tstamp_echo "Test scan Successful!"
 fi
-
-# Remove temporary files
-verbose_echo "Removing temp directory..."
-rm -r "${TEMP_DIRECTORY}"
 
 # --- Post-creation Actions ---
 # Open the created document if the -o argument was provided and document was created
@@ -357,12 +360,53 @@ if [[ "$OPEN_FILE" -eq 1 && "$DOCUMENT_CREATED" -eq 1 ]]; then
     fi
 fi
 
+# --- Document Printing ---
+# Generate a blank document
+generate_blank_document () {
+    tstamp_echo "Generating blank document..."
+
+    local document_path="$1"
+    local page_count="$2"
+
+    # Check page count >= 1
+    if ! [[ "$page_count" =~ ^[1-9]+[0-9]*$ ]] ; then
+        tstamp_echo "Error: Page count must be a number greater than or equal to 1."
+        return 1
+    fi
+
+    # Create an empty file
+    touch "${document_path}.txt"
+
+    # Check if the document exists after creation
+    if [ ! -f "${document_path}.txt" ]; then
+        tstamp_echo "Error: Failed to create document: $document_path.txt"
+        return 1
+    fi
+
+    # Convert blank document to PDF
+    verbose_echo "Converting blank document..."
+    convert "TEXT:${document_path}.txt" "${document_path}.pdf"
+
+    verbose_echo "Blank document created successfully: $document_path"
+    return 0
+}
+
 # Print the created document if the -p argument was provided and document was created
+tstamp_echo "Attempting to print document..."
 if [[ "$PRINT_FILE" -eq 1 && "$DOCUMENT_CREATED" -eq 1 ]]; then
     if [[ -f "${OUTPUT_DIRECTORY}${FILENAME}" ]]; then # Check if document exists (it should!)
-        verbose_echo "Sending document to printer: ${OUTPUT_DIRECTORY}${FILENAME}"
-        # Capture stderr and exit status from lp command
-        LP_OUTPUT=$(lp "${OUTPUT_DIRECTORY}${FILENAME}" 2>&1)
+
+        if [[ "$PRINT_BLANK" -eq 1 ]]; then
+            # Generate a blank document to print <DOCUMENT PATH> <PAGE COUNT>
+            generate_blank_document "${TEMP_DIRECTORY}blank_document" 1
+            verbose_echo "Sending blank document to printer..."
+            # Capture stderr and exit status from lp command
+            LP_OUTPUT=$(lp "${TEMP_DIRECTORY}blank_document.pdf" 2>&1)
+        else
+            verbose_echo "Sending document to printer: ${OUTPUT_DIRECTORY}${FILENAME}"
+            # Capture stderr and exit status from lp command
+            LP_OUTPUT=$(lp "${OUTPUT_DIRECTORY}${FILENAME}" 2>&1)
+        fi
         LP_STATUS=$?
 
         # Status code not succesful
@@ -376,10 +420,19 @@ if [[ "$PRINT_FILE" -eq 1 && "$DOCUMENT_CREATED" -eq 1 ]]; then
             fi
         else
             verbose_echo "Document successfully sent to printer."
+            # Remove blank document if one was created
+            if [[ "$PRINT_BLANK" -eq 1 ]]; then
+                verbose_echo "Removing blank document..."
+                rm -r "${TEMP_DIRECTORY}blank_document.pdf"
+            fi
         fi
     else
         tstamp_echo "Error: Cannot print file. document was not found at ${OUTPUT_DIRECTORY}${FILENAME}" >&2
     fi
 fi
+
+# Remove temporary files
+verbose_echo "Removing temp directory..."
+rm -r "${TEMP_DIRECTORY}"
 
 tstamp_echo "Done."

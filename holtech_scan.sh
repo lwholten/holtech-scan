@@ -19,15 +19,17 @@ TARGET_DIRECTORY="${DEFAULT_DIRECTORY}" # Target directory is default unless cha
 DIFFERENT_DIRECTORY=0 # Toggle if directory changed with argument
 OPEN_FILE=0 # Toggle to open file, 0 by default
 PRINT_FILE=0 # Toggle to print file, 0 by default
+SCAN_DELAY=0 # Wait time before program starts scan
 HELPTEXT="""
     [ARGUMENTS]         [DESCRIPTION]               [DEFAULT]
     -h --help:          Show help menu              False
     -v --verbose:       Enable verbose output       False
     -t --test:          Enable test mode            False
     -a --auto:          Auto generate file names    False
-    -d --directory:     Set directory              (${DEFAULT_DIRECTORY})
+    -d --directory:     Set directory              ${DEFAULT_DIRECTORY}
     -o --open:          Open the file               False
     -p --print:         Print the file              False
+    -w --wait:          Scan wait time <seconds>    None    
 """
 PRINTERTEXT="""
     Printer Issues?
@@ -69,7 +71,6 @@ while [[ "$#" -gt 0 ]]; do # Loop while there are arguments left
                 TARGET_DIRECTORY="$1"
                 verbose_echo "Target directory set to '$TARGET_DIRECTORY'."
                 DIFFERENT_DIRECTORY=1
-                verbose_echo "Target directory is not default."
                 shift # Consume the directory path argument
             else
                 tstamp_echo "Error: --directory requires a directory path." >&2
@@ -86,7 +87,18 @@ while [[ "$#" -gt 0 ]]; do # Loop while there are arguments left
             verbose_echo "Print file (-p) enabled."
             shift # Consume the -p argument
             ;;
-                        
+        -w|--wait)
+            shift # Cosnume the -w argument
+            # Check argument is not another flag
+            if [[ -n "$1" && "$1" != -* ]]; then
+                SCAN_DELAY="$1"
+                verbose_echo "Wait time (-w) is ${1} seconds."
+                shift # Consume the time argument
+            else
+                tstamp_echo "Error: --wait requires a time <seconds>." >&2
+                exit 1
+            fi
+            ;;          
         *)
             tstamp_echo "Error: Unknown argument: $1" >&2 # Report the unknown argument
             exit 1 # Throw error if an unknown argument is provided
@@ -146,14 +158,14 @@ validate_filename() {
     fi
 
     # Fetch file extension
-    FILE_EXTENSION=$(fetch_fileext "$proposed_name")
-    verbose_echo "Found extension '$FILE_EXTENSION' for '$proposed_name'"
+    file_extension=$(fetch_fileext "$proposed_name")
+    verbose_echo "Found extension '$file_extension' for '$proposed_name'"
 
     # File extension checks
-    if [[ $FILE_EXTENSION = "" ]]; then
+    if [[ $file_extension = "" ]]; then
         tstamp_echo "Error: Filename must have an extension"
         return 1
-    elif [[ $FILE_EXTENSION != "pdf" ]]; then
+    elif [[ $file_extension != "pdf" ]]; then
         tstamp_echo "Error: File extension is not supported"
         return 1
     fi
@@ -165,8 +177,7 @@ validate_filename() {
     return 0 # Success
 }
 
-# --- Handlers ---
-# File name handling
+# --- File Handling ---
 tstamp_echo "Checking filename..."
 # Generate a filename if the -a argument was provided or ask for input
 if [[ "$AUTO_FILE_NAMES" -eq 0 ]]; then 
@@ -189,7 +200,11 @@ else
     verbose_echo "Filename created: '$FILENAME'"
 fi
 
-# --- File Management ---
+# Store file extension for generated file
+FILE_EXTENSION="$(fetch_fileext "$FILENAME")"
+
+
+# --- Directory Handling ---
 tstamp_echo "Checking and creating directories..."
 
 # Function to check and ensure a directory exists
@@ -220,7 +235,7 @@ if [[ ${DIFFERENT_DIRECTORY} -eq 1 ]]; then
     verbose_echo "Target: '${TARGET_DIRECTORY}' is different from Default: '${DEFAULT_DIRECTORY}'."
 else 
     # Default directories
-    OUTPUT_DIRECTORY="${TARGET_DIRECTORY}$(fetch_fileext "${FILENAME}")/"
+    OUTPUT_DIRECTORY="${TARGET_DIRECTORY}${FILE_EXTENSION}/" 
     TEMP_DIRECTORY="${TARGET_DIRECTORY}hscan_temp/"
     verbose_echo "Target: '${TARGET_DIRECTORY}' is the same as Default: '${DEFAULT_DIRECTORY}'."
 fi
@@ -231,9 +246,42 @@ check_and_create_directory "$TEMP_DIRECTORY" "temp directory"
 check_and_create_directory "$OUTPUT_DIRECTORY" "output directory"
 
 # --- Scanning ---
+# Scan delay function
+scan_countdown() {
+    # Input validation for SCAN_DELAY
+    if ! [[ "$SCAN_DELAY" =~ ^[0-9]+$ ]]; then
+        tstamp_echo "Error: --wait <time> must be a positive integer. Aborting countdown."
+        return 1 # Return a non-zero status to indicate an error
+    fi
+
+    # Countdown notification
+    if (( SCAN_DELAY < 0 )); then
+        tstamp_echo "Error: --wait <time> cannot be negative. Aborting countdown."
+        return 1 # Return a non-zero status
+    elif (( SCAN_DELAY > 0 )); then
+        tstamp_echo "Scan delay enabled. Starting countdown."
+    fi
+
+    # Loop to count down
+    for (( i=$SCAN_DELAY; i>0; i-- )); do
+        # Print waiting text if seconds remaining is <= 5 or multiple of 5
+        if (( i <= 5 )) || (( i % 5 == 0 )); then
+        tstamp_echo "Waiting for ${i} more seconds..."
+        fi
+        sleep 1 # wait 1 second
+    done
+    return 0 # Return 0 for success
+}
+
 # Start scan procedure
+verbose_echo "Starting scan procedure."
 if [[ "$TEST" -eq 0 ]]; then
-    tstamp_echo "Performing scan..."
+
+    verbose_echo "Test mode disabled. Device will perform scan."
+
+    scan_countdown # Wait until allowed
+    tstamp_echo "Starting Scan..."
+
     # Tell the printer to perform a scan
     scanimage --format=tiff --mode Gray --resolution 300 > "${TEMP_DIRECTORY}scan_result.tiff"
     STATUS=$?
@@ -246,16 +294,18 @@ if [[ "$TEST" -eq 0 ]]; then
         # Remove temporary files
         verbose_echo "Removing temp files..."
         rm -f "${TEMP_DIRECTORY}scan_result.tiff"
-        rm -r "${TEMP_DIRECTORY}"
 
-        exit 1 # CHANGE AT LATER DATE TO CONVERT ERROR INTO RESULT PDF
+        exit 1 # CHANGE AT LATER DATE TO CONVERT ERROR INTO RESULT document
     fi
-    # Convert scan to PDF
-    verbose_echo "Converting to PDF..."
+    # Convert scan to document
+    verbose_echo "Converting to document..."
     convert "${TEMP_DIRECTORY}scan_result.tiff" "${OUTPUT_DIRECTORY}${FILENAME}"
-    PDF_CREATED=1
+    DOCUMENT_CREATED=1
 else
-    tstamp_echo "Test mode enabled. Faking scan..."
+    verbose_echo "Test mode enabled. Scan will be generated."
+
+    scan_countdown # Wait until allowed
+    tstamp_echo "Generating Scan..."
     
     # In test mode, create a dummy file with specific test document content
     verbose_echo "Generating dummy text file..."
@@ -284,38 +334,40 @@ else
         echo "---------------------"
     } > "${DUMMY_TEXT_FILE}" # Redirect all echoes to the dummy text file
 
-    verbose_echo "Converting dummy text file to PDF..."
+    verbose_echo "Converting dummy text file to document..."
     convert "TEXT:${DUMMY_TEXT_FILE}" "${OUTPUT_DIRECTORY}${FILENAME}"
-    PDF_CREATED=1
+    DOCUMENT_CREATED=1
+
+    tstamp_echo "Test scan Successful!"
 fi
 
 # Remove temporary files
-verbose_echo "Removing temp files..."
+verbose_echo "Removing temp directory..."
 rm -r "${TEMP_DIRECTORY}"
 
 # --- Post-creation Actions ---
-# Open the created PDF if the -o argument was provided and PDF was created
-if [[ "$OPEN_FILE" -eq 1 && "$PDF_CREATED" -eq 1 ]]; then
-    if [[ -f "${OUTPUT_DIRECTORY}${FILENAME}" ]]; then # Check if PDF exists (it should!)
-        verbose_echo "Opening generated PDF: ${OUTPUT_DIRECTORY}${FILENAME}"
+# Open the created document if the -o argument was provided and document was created
+if [[ "$OPEN_FILE" -eq 1 && "$DOCUMENT_CREATED" -eq 1 ]]; then
+    if [[ -f "${OUTPUT_DIRECTORY}${FILENAME}" ]]; then # Check if document exists (it should!)
+        verbose_echo "Opening generated document: ${OUTPUT_DIRECTORY}${FILENAME}"
         xdg-open "${OUTPUT_DIRECTORY}" &>/dev/null & # Open folder
         xdg-open "${OUTPUT_DIRECTORY}${FILENAME}" &>/dev/null & # Open file
     else
-        tstamp_echo "Error: Cannot open file. PDF was not found at ${OUTPUT_DIRECTORY}${FILENAME}" >&2
+        tstamp_echo "Error: Cannot open file. document was not found at ${OUTPUT_DIRECTORY}${FILENAME}" >&2
     fi
 fi
 
-# Print the created PDF if the -p argument was provided and PDF was created
-if [[ "$PRINT_FILE" -eq 1 && "$PDF_CREATED" -eq 1 ]]; then
-    if [[ -f "${OUTPUT_DIRECTORY}${FILENAME}" ]]; then # Check if PDF exists (it should!)
-        verbose_echo "Sending PDF to printer: ${OUTPUT_DIRECTORY}${FILENAME}"
+# Print the created document if the -p argument was provided and document was created
+if [[ "$PRINT_FILE" -eq 1 && "$DOCUMENT_CREATED" -eq 1 ]]; then
+    if [[ -f "${OUTPUT_DIRECTORY}${FILENAME}" ]]; then # Check if document exists (it should!)
+        verbose_echo "Sending document to printer: ${OUTPUT_DIRECTORY}${FILENAME}"
         # Capture stderr and exit status from lp command
         LP_OUTPUT=$(lp "${OUTPUT_DIRECTORY}${FILENAME}" 2>&1)
         LP_STATUS=$?
 
         # Status code not succesful
         if [[ "$LP_STATUS" -ne 0 ]]; then
-            tstamp_echo "Error: Failed to send PDF to printer. lp exit code: $LP_STATUS" >&2
+            tstamp_echo "Error: Failed to send document to printer. lp exit code: $LP_STATUS" >&2
             tstamp_echo "lp command output: $LP_OUTPUT" >&2
 
             # If the error is because of no default destination
@@ -323,10 +375,10 @@ if [[ "$PRINT_FILE" -eq 1 && "$PDF_CREATED" -eq 1 ]]; then
                 tstamp_echo "${PRINTERTEXT}";
             fi
         else
-            verbose_echo "PDF successfully sent to printer."
+            verbose_echo "Document successfully sent to printer."
         fi
     else
-        tstamp_echo "Error: Cannot print file. PDF was not found at ${OUTPUT_DIRECTORY}${FILENAME}" >&2
+        tstamp_echo "Error: Cannot print file. document was not found at ${OUTPUT_DIRECTORY}${FILENAME}" >&2
     fi
 fi
 

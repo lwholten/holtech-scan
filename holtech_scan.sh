@@ -14,7 +14,7 @@ tstamp_echo() {
 VERBOSE=0 # Verbose output is 0 by default
 TEST=0 # Test mode is 0 by default
 AUTO_FILE_NAMES=0 # Auto generated file names are 0 by default
-DEFAULT_DIRECTORY="/home/$USER/Documents/Scans/" # Default directory for saved scans
+DEFAULT_DIRECTORY="/home/$USER/Documents/HScan/" # Default directory for saved scans
 TARGET_DIRECTORY="${DEFAULT_DIRECTORY}" # Target directory is default unless changed
 DIFFERENT_DIRECTORY=0 # Toggle if directory changed with argument
 OPEN_FILE=0 # Toggle to open file, 0 by default
@@ -39,16 +39,6 @@ PRINTERTEXT="""
 
     Try again once the issue is resolved.
 """
-DIRECTORYTEXT="""
-    File Issues?
-
-    It appears that the provided directory is incorrect. This may
-    be a parsing error with the script.
-    To resolve the issue, try quotation maarks:
-
-        '/usr/local/bin/holtech.sh -a -d \"${DEFAULT_DIRECTORY}\"'
-"""
-
 # --- Argument Handling --- 
 # Function argument checks and responses
 while [[ "$#" -gt 0 ]]; do # Loop while there are arguments left
@@ -202,49 +192,52 @@ fi
 # --- File Management ---
 tstamp_echo "Checking and creating directories..."
 
+# Function to check and ensure a directory exists
+check_and_create_directory() {
+    local directory_path="$1" # The path to the directory
+    local directory_name_for_messages="$2" # Its name (e.g. 'target directory')
+
+    # Attempt to create the directory if it doesn't exist
+    mkdir -p "$directory_path"
+
+    # Check if the directory exists after attempt
+    if [ ! -d "$directory_path" ]; then
+        tstamp_echo "Error: Failed to create or access the ${directory_name_for_messages} at '$directory_path'." >&2
+        exit 1
+    fi
+
+    verbose_echo "Ensured ${directory_name_for_messages} '${directory_path}' exists."
+}
+
 # Create the target directory if it doesn't exist
-mkdir -p "$TARGET_DIRECTORY"
-verbose_echo "Ensured target directory '${TARGET_DIRECTORY}' exists."
+check_and_create_directory "$TARGET_DIRECTORY" "target directory"
 
-# Fetch file extension
-FILE_EXTENSION=$(fetch_fileext "${FILENAME}") 
-
-# Construct and create the OUTPUT directory within TARGET_DIRECTORY
-# Target has been changed
-if [[ ${DIFFERENT_DIRECTORY} -eq 1 ]]; then
-    # Set OUTPUT directory to DEFAULT_DIRECTORY 
+# Generate OUTPUT and TEMP directories using TARGET_DIRECTORY
+if [[ ${DIFFERENT_DIRECTORY} -eq 1 ]]; then 
+    # Target is different from default
     OUTPUT_DIRECTORY="${TARGET_DIRECTORY}" 
+    TEMP_DIRECTORY="${TARGET_DIRECTORY}hscan_temp/"
     verbose_echo "Target: '${TARGET_DIRECTORY}' is different from Default: '${DEFAULT_DIRECTORY}'."
-# Target is default
-else
-    # Set OUTPUT directory to DEFAULT_DIRECTORY/FILE_EXTENSION
-    OUTPUT_DIRECTORY="${TARGET_DIRECTORY}${FILE_EXTENSION}/"
+else 
+    # Default directories
+    OUTPUT_DIRECTORY="${TARGET_DIRECTORY}$(fetch_fileext "${FILENAME}")/"
+    TEMP_DIRECTORY="${TARGET_DIRECTORY}hscan_temp/"
     verbose_echo "Target: '${TARGET_DIRECTORY}' is the same as Default: '${DEFAULT_DIRECTORY}'."
 fi
 
-# Construct and create the TEMP directory within TARGET_DIRECTORY
-TEMP_DIRECTORY="${TARGET_DIRECTORY}temp/"
-mkdir -p "$TEMP_DIRECTORY"
-# Check if TEMP_DIRECTORY exists
-if [ ! -d "$TEMP_DIRECTORY" ]; then
-    # if it doesn't throw error with suggestion
-    tstamp_echo "$DIRECTORYTEXT"
-    exit 1
-fi
-verbose_echo "TEMP directory created and ensured directory '${TEMP_DIRECTORY}' exists."
+# Create the TEMP directory if it doesn't exist
+check_and_create_directory "$TEMP_DIRECTORY" "temp directory"
+# Create the OUTPUT directory if it doesn't exist
+check_and_create_directory "$OUTPUT_DIRECTORY" "output directory"
 
-# Construct and create the target output directory
-mkdir -p "$OUTPUT_DIRECTORY"
-verbose_echo "${FILE_EXTENSION^^} directory created and ensured directory '${OUTPUT_DIRECTORY}' exists."
-
+# --- Scanning ---
 # Start scan procedure
 if [[ "$TEST" -eq 0 ]]; then
     tstamp_echo "Performing scan..."
     # Tell the printer to perform a scan
     scanimage --format=tiff --mode Gray --resolution 300 > "${TEMP_DIRECTORY}scan_result.tiff"
     STATUS=$?
-
-    # Convert scan to PDF
+    # Check status
     if [[ "$STATUS" -eq 0 ]]; then
         tstamp_echo "Scan Successful!"
     else
@@ -257,6 +250,7 @@ if [[ "$TEST" -eq 0 ]]; then
 
         exit 1 # CHANGE AT LATER DATE TO CONVERT ERROR INTO RESULT PDF
     fi
+    # Convert scan to PDF
     verbose_echo "Converting to PDF..."
     convert "${TEMP_DIRECTORY}scan_result.tiff" "${OUTPUT_DIRECTORY}${FILENAME}"
     PDF_CREATED=1
@@ -304,6 +298,7 @@ rm -r "${TEMP_DIRECTORY}"
 if [[ "$OPEN_FILE" -eq 1 && "$PDF_CREATED" -eq 1 ]]; then
     if [[ -f "${OUTPUT_DIRECTORY}${FILENAME}" ]]; then # Check if PDF exists (it should!)
         verbose_echo "Opening generated PDF: ${OUTPUT_DIRECTORY}${FILENAME}"
+        xdg-open "${OUTPUT_DIRECTORY}" &>/dev/null & # Open folder
         xdg-open "${OUTPUT_DIRECTORY}${FILENAME}" &>/dev/null & # Open file
     else
         tstamp_echo "Error: Cannot open file. PDF was not found at ${OUTPUT_DIRECTORY}${FILENAME}" >&2

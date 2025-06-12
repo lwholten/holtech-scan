@@ -14,26 +14,39 @@ tstamp_echo() {
 VERBOSE=0 # Verbose output is 0 by default
 TEST=0 # Test mode is 0 by default
 AUTO_FILE_NAMES=0 # Auto generated file names are 0 by default
-TARGET_DIRECTORY="/home/$USER/Documents/Scans/" # Target storage location for saved scans#
-OPEN_FILE=0 # Toggle to open file creation, 0 by default
-PRINT_FILE=0 # Toggle to print file creation, 0 by default
+DEFAULT_DIRECTORY="/home/$USER/Documents/Scans/" # Default directory for saved scans
+TARGET_DIRECTORY="${DEFAULT_DIRECTORY}" # Target directory is default unless changed
+DIFFERENT_DIRECTORY=0 # Toggle if directory changed with argument
+OPEN_FILE=0 # Toggle to open file, 0 by default
+PRINT_FILE=0 # Toggle to print file, 0 by default
 HELPTEXT="""
-    [ARGUMENTS]         [DESCRIPTION]                   [DEFAULT]
-    -h --help:          Show help menu                  False
-    -v --verbose:       Enable verbose output           False
-    -t --test:          Enable test mode                False
-    -a --auto:          Auto generate file names        False
-    -d --directory:     Set directory for saved scans   (/home/$USER/Documents/Scans/)
-    -o --open:          Open the file creation        False
-    -p --print:         Print the file creation       False
+    [ARGUMENTS]         [DESCRIPTION]               [DEFAULT]
+    -h --help:          Show help menu              False
+    -v --verbose:       Enable verbose output       False
+    -t --test:          Enable test mode            False
+    -a --auto:          Auto generate file names    False
+    -d --directory:     Set directory              (${DEFAULT_DIRECTORY})
+    -o --open:          Open the file               False
+    -p --print:         Print the file              False
 """
 PRINTERTEXT="""
+    Printer Issues?
+
     It appears that no default printer is set on this system.
     Use the 'lpoptions' command to set one:
         1. List available printers using 'lpstat -p -d'
         2. Set a default printer using 'lpoptions -d <printer_name>'
 
     Try again once the issue is resolved.
+"""
+DIRECTORYTEXT="""
+    File Issues?
+
+    It appears that the provided directory is incorrect. This may
+    be a parsing error with the script.
+    To resolve the issue, try quotation maarks:
+
+        '/usr/local/bin/holtech.sh -a -d \"${DEFAULT_DIRECTORY}\"'
 """
 
 # --- Argument Handling --- 
@@ -65,6 +78,8 @@ while [[ "$#" -gt 0 ]]; do # Loop while there are arguments left
             if [[ -n "$1" && "$1" != -* ]]; then
                 TARGET_DIRECTORY="$1"
                 verbose_echo "Target directory set to '$TARGET_DIRECTORY'."
+                DIFFERENT_DIRECTORY=1
+                verbose_echo "Target directory is not default."
                 shift # Consume the directory path argument
             else
                 tstamp_echo "Error: --directory requires a directory path." >&2
@@ -184,28 +199,49 @@ else
     verbose_echo "Filename created: '$FILENAME'"
 fi
 
-# Check directory exists and create if not
+# --- File Management ---
 tstamp_echo "Checking and creating directories..."
 
-# Create the base target directory if it doesn't exist
+# Create the target directory if it doesn't exist
 mkdir -p "$TARGET_DIRECTORY"
-verbose_echo "Ensured base directory '${TARGET_DIRECTORY}' exists."
+verbose_echo "Ensured target directory '${TARGET_DIRECTORY}' exists."
 
-# Construct and create the temporary files directory within TARGET_DIRECTORY
-TEMP_PATH="${TARGET_DIRECTORY}temp/"
-mkdir -p "$TEMP_PATH"
-verbose_echo "TEMP path created and ensured directory '${TEMP_PATH}' exists."
+# Fetch file extension
+FILE_EXTENSION=$(fetch_fileext "${FILENAME}") 
 
-# Construct and create the PDF output directory within TARGET_DIRECTORY
-PDF_PATH="${TARGET_DIRECTORY}pdf/"
-mkdir -p "$PDF_PATH"
-verbose_echo "PDF path created and ensured directory '${PDF_PATH}' exists."
+# Construct and create the OUTPUT directory within TARGET_DIRECTORY
+# Target has been changed
+if [[ ${DIFFERENT_DIRECTORY} -eq 1 ]]; then
+    # Set OUTPUT directory to DEFAULT_DIRECTORY 
+    OUTPUT_DIRECTORY="${TARGET_DIRECTORY}" 
+    verbose_echo "Target: '${TARGET_DIRECTORY}' is different from Default: '${DEFAULT_DIRECTORY}'."
+# Target is default
+else
+    # Set OUTPUT directory to DEFAULT_DIRECTORY/FILE_EXTENSION
+    OUTPUT_DIRECTORY="${TARGET_DIRECTORY}${FILE_EXTENSION}/"
+    verbose_echo "Target: '${TARGET_DIRECTORY}' is the same as Default: '${DEFAULT_DIRECTORY}'."
+fi
+
+# Construct and create the TEMP directory within TARGET_DIRECTORY
+TEMP_DIRECTORY="${TARGET_DIRECTORY}temp/"
+mkdir -p "$TEMP_DIRECTORY"
+# Check if TEMP_DIRECTORY exists
+if [ ! -d "$TEMP_DIRECTORY" ]; then
+    # if it doesn't throw error with suggestion
+    tstamp_echo "$DIRECTORYTEXT"
+    exit 1
+fi
+verbose_echo "TEMP directory created and ensured directory '${TEMP_DIRECTORY}' exists."
+
+# Construct and create the target output directory
+mkdir -p "$OUTPUT_DIRECTORY"
+verbose_echo "${FILE_EXTENSION^^} directory created and ensured directory '${OUTPUT_DIRECTORY}' exists."
 
 # Start scan procedure
 if [[ "$TEST" -eq 0 ]]; then
     tstamp_echo "Performing scan..."
     # Tell the printer to perform a scan
-    scanimage --format=tiff --mode Gray --resolution 300 > ${TEMP_PATH}"scan_result.tiff"
+    scanimage --format=tiff --mode Gray --resolution 300 > "${TEMP_DIRECTORY}scan_result.tiff"
     STATUS=$?
 
     # Convert scan to PDF
@@ -213,42 +249,73 @@ if [[ "$TEST" -eq 0 ]]; then
         tstamp_echo "Scan Successful!"
     else
         tstamp_echo "Scan Unsuccessful."
-        rm -f "${TEMP_PATH}scan_result.tiff" # Clean up any incomplete file
+        
+        # Remove temporary files
+        verbose_echo "Removing temp files..."
+        rm -f "${TEMP_DIRECTORY}scan_result.tiff"
+        rm -r "${TEMP_DIRECTORY}"
+
         exit 1 # CHANGE AT LATER DATE TO CONVERT ERROR INTO RESULT PDF
     fi
     verbose_echo "Converting to PDF..."
-    convert ${TEMP_PATH}"scan_result.tiff" ${PDF_PATH}${FILENAME}
+    convert "${TEMP_DIRECTORY}scan_result.tiff" "${OUTPUT_DIRECTORY}${FILENAME}"
     PDF_CREATED=1
 else
-    verbose_echo "Test mode enabled. Faking scan..."
-    # In test mode, create a dummy file and convert it to PDF
-    DUMMY_TEXT_FILE="${TEMP_PATH}scan_result.txt"
-    tstamp_echo "${HELPTEXT}" > "${DUMMY_TEXT_FILE}"
+    tstamp_echo "Test mode enabled. Faking scan..."
+    
+    # In test mode, create a dummy file with specific test document content
+    verbose_echo "Generating dummy text file..."
+    DUMMY_TEXT_FILE="${TEMP_DIRECTORY}scan_result.txt"
+    # Generate content for the dummy text file
+    {
+        echo "--- Test Document ---"
+        echo ""
+        echo "This is a test document generated by the holtech_scan.sh script."
+        echo "No actual scan has taken place."
+        echo ""
+        echo "Scan Simulation Details:"
+        echo "  Timestamp: $(date +"%Y-%m-%d %H:%M:%S")"
+        echo "  Machine: $(hostname)"
+        echo "  User: $(whoami)"
+        echo "  Operating System: $(uname -s)"
+        echo "  Kernel Version: $(uname -r)"
+        echo ""
+        echo "This file is for testing purposes only."
+        echo ""
+        echo "---------------------"
+        echo ""
+        echo "Additional help (-h --help):"
+        echo "${HELPTEXT}"
+        echo ""
+        echo "---------------------"
+    } > "${DUMMY_TEXT_FILE}" # Redirect all echoes to the dummy text file
+
     verbose_echo "Converting dummy text file to PDF..."
-    convert "TEXT:${DUMMY_TEXT_FILE}" "${PDF_PATH}${FILENAME}"
+    convert "TEXT:${DUMMY_TEXT_FILE}" "${OUTPUT_DIRECTORY}${FILENAME}"
     PDF_CREATED=1
 fi
+
 # Remove temporary files
 verbose_echo "Removing temp files..."
-rm -r ${TEMP_PATH}
+rm -r "${TEMP_DIRECTORY}"
 
 # --- Post-creation Actions ---
 # Open the created PDF if the -o argument was provided and PDF was created
 if [[ "$OPEN_FILE" -eq 1 && "$PDF_CREATED" -eq 1 ]]; then
-    if [[ -f "${PDF_PATH}${FILENAME}" ]]; then # Check if PDF exists (it should!)
-        verbose_echo "Opening generated PDF: ${PDF_PATH}${FILENAME}"
-        xdg-open "${PDF_PATH}${FILENAME}" &>/dev/null & # Open file
+    if [[ -f "${OUTPUT_DIRECTORY}${FILENAME}" ]]; then # Check if PDF exists (it should!)
+        verbose_echo "Opening generated PDF: ${OUTPUT_DIRECTORY}${FILENAME}"
+        xdg-open "${OUTPUT_DIRECTORY}${FILENAME}" &>/dev/null & # Open file
     else
-        tstamp_echo "Error: Cannot open file. PDF was not found at ${PDF_PATH}${FILENAME}" >&2
+        tstamp_echo "Error: Cannot open file. PDF was not found at ${OUTPUT_DIRECTORY}${FILENAME}" >&2
     fi
 fi
 
 # Print the created PDF if the -p argument was provided and PDF was created
 if [[ "$PRINT_FILE" -eq 1 && "$PDF_CREATED" -eq 1 ]]; then
-    if [[ -f "${PDF_PATH}${FILENAME}" ]]; then # Check if PDF exists (it should!)
-        verbose_echo "Sending PDF to printer: ${PDF_PATH}${FILENAME}"
+    if [[ -f "${OUTPUT_DIRECTORY}${FILENAME}" ]]; then # Check if PDF exists (it should!)
+        verbose_echo "Sending PDF to printer: ${OUTPUT_DIRECTORY}${FILENAME}"
         # Capture stderr and exit status from lp command
-        LP_OUTPUT=$(lp "${PDF_PATH}${FILENAME}" 2>&1)
+        LP_OUTPUT=$(lp "${OUTPUT_DIRECTORY}${FILENAME}" 2>&1)
         LP_STATUS=$?
 
         # Status code not succesful
@@ -264,7 +331,7 @@ if [[ "$PRINT_FILE" -eq 1 && "$PDF_CREATED" -eq 1 ]]; then
             verbose_echo "PDF successfully sent to printer."
         fi
     else
-        tstamp_echo "Error: Cannot print file. PDF was not found at ${PDF_PATH}${FILENAME}" >&2
+        tstamp_echo "Error: Cannot print file. PDF was not found at ${OUTPUT_DIRECTORY}${FILENAME}" >&2
     fi
 fi
 
